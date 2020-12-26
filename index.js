@@ -9,7 +9,9 @@ const express = require("express"),
   Joi = require('joi'),
   bcrypt = require("bcrypt"),
   http = require('http');
-  jwt = require("jsonwebtoken");
+  redis = require('./middleware/radis')
+jwt = require("jsonwebtoken");
+auth = require('./middleware/auth');
 
 var socketConnection = require('./socket');
 var server = require("http").Server(app);
@@ -28,29 +30,21 @@ app.use(
 );
 
 
-app.post("/addUser", async (req, res) => {
+app.post("/registerUser", async (req, res) => {
   try {
     let schema = Joi.object().keys({
       email: Joi.string().email().required(),
       name: Joi.string().required(),
-      phoneNumber: Joi.string().required(),
-      password: Joi.string().required(),
-      deviceToken: Joi.string().optional().allow("")
+      password: Joi.string().required()
     });
     let payload = await validateSchema(req.body, schema, {
       presence: "required"
     })
 
-    let [isEmailAlready, isPhoneAlready] = await Promise.all([
-      User.findOne({ email: payload.email }, {}, { lean: true }),
-      User.findOne({ phoneNumber: payload.phoneNumber }, {}, { lean: true })
-    ]);
+    let isEmailAlready = await User.findOne({ email: payload.email }, {}, { lean: true })
 
     if (isEmailAlready)
       return res.status(400).json({ msg: "Email is already exists", statusCode: 400 });
-
-    if (isPhoneAlready)
-      return res.status(400).json({ msg: "Phone number is already exists", statusCode: 400 });
 
     payload.loginTime = new Date().getTime();
     payload.password = await bcrypt.hashSync(payload.password, 10);
@@ -65,11 +59,9 @@ app.post("/addUser", async (req, res) => {
     let dataToSend = {
       token: token,
       email: data.email,
-      deviceToken: data.deviceToken,
       loginTime: data.loginTime,
       _id: data._id,
       name: data.name,
-      phoneNumber: data.phoneNumber,
       createdAt: data.createdAt
     };
     return res
@@ -88,9 +80,7 @@ app.post("/login", async (req, res) => {
   try {
     let schema = Joi.object().keys({
       email: Joi.string().email().required(),
-      phoneNumber: Joi.string().required(),
-      password: Joi.string().required(),
-      deviceToken: Joi.string().optional().allow("")
+      password: Joi.string().required()
     });
     let payload = await validateSchema(req.body, schema, {
       presence: "required"
@@ -107,9 +97,7 @@ app.post("/login", async (req, res) => {
       throw "The password you have entered is invalid";
     payload.loginTime = new Date().getTime();
     let dataToSet = {
-      loginTime: payload.loginTime,
-      deviceToken: payload.deviceToken,
-      deviceType: payload.deviceType
+      loginTime: payload.loginTime
     };
     let data = await DAO.findAndUpdate(User, { _id: findUser._id }, { $set: dataToSet }, { lean: true, new: true });
     let tokenData = {
@@ -122,11 +110,9 @@ app.post("/login", async (req, res) => {
     let dataToSend = {
       token: token,
       email: data.email,
-      deviceToken: data.deviceToken,
       loginTime: data.loginTime,
       _id: data._id,
       name: data.name,
-      phoneNumber: data.phoneNumber,
       createdAt: data.createdAt
     };
     return res
@@ -139,9 +125,46 @@ app.post("/login", async (req, res) => {
   }
 });
 
+
+
+app.get("/userDetails", async (req, res) => {
+  try {
+    authToken = req.headers['authorization']
+    let result = await auth.user(authToken)
+
+    return res
+      .status(200)
+      .json({ data: result, msg: "success", statusCode: 200, isMatch: true });
+
+  } catch (err) {
+    console.log("err  err err   ", err)
+    res.status(400).json({ data: err, msg: "error", statusCode: 400 });
+  }
+});
+
+
+
+app.get("/authTokensOfUser", async (req, res) => {
+  try {
+    authToken = req.headers['authorization']
+
+    let redisList = redis.getList(authToken)
+
+    return res
+      .status(200)
+      .json({ data: redisList, msg: "success", statusCode: 200, isMatch: true });
+
+  } catch (err) {
+    console.log("err  err err   ", err)
+    res.status(400).json({ data: err, msg: "error", statusCode: 400 });
+  }
+});
+
+
+
 app.set("port", 3000);
 mongoose.Promise = global.Promise;
-mongoose.connect("mongodb://127.0.0.1:27017/machine_test", {
+mongoose.connect("mongodb://127.0.0.1:27017/accubitsDb", {
   useNewUrlParser: true,
   useCreateIndex: true,
   useFindAndModify: false,
@@ -179,3 +202,22 @@ const generateToken = async val => {
 };
 
 
+
+
+const veryfyToken = async val => {
+  try {
+    return new Promise((resolve, reject) => {
+      jwt.verify(token, privateKey, (err, payload) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(payload);
+      })
+    })
+  } catch (err) {
+    throw err;
+  }
+};
+
+module.export = veryfyToken 
